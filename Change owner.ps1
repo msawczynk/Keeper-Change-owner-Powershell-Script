@@ -15,8 +15,7 @@
       that were previously identified for specific teams.
 
     IMPORTANT: 
-    1. Ensure you are logged into Keeper Commander (e.g., via 'keeper-commander.exe shell' then 'exit')
-       IN THE SAME POWERSHELL WINDOW before running this script interactively.
+    1. If an active Keeper session is not detected, the script launches the Keeper shell so you can log in and then continue.
     2. This script attempts to use JSON output (--format json) from Keeper CLI commands.
        If JSON fails, it falls back to text parsing which can be fragile.
     3. Out-GridView requires a graphical environment (WPF). If not available, the script
@@ -228,6 +227,11 @@ Function Test-KeeperSession {
     }
     return $false
 }
+Function Invoke-KeeperLoginShell {
+    Write-Host "`nLaunching Keeper shell for login. Type 'quit' when done." -ForegroundColor Cyan
+    & $Global:KeeperExecutablePath shell
+}
+
 
 Function Select-FromConsoleMenu {
     param(
@@ -511,9 +515,8 @@ try {
         Write-Host "`nVerifying Keeper login..." -ForegroundColor Yellow
         $sessionOk = Test-KeeperSession
         if (-not $sessionOk) {
-            Write-Warning "No active Keeper session detected. Log in via "keeper-commander.exe shell" in another window."
-            $resp = Read-Host "Press Enter when logged in or type Q to quit"
-            if ($resp -and $resp.StartsWith("q", [System.StringComparison]::OrdinalIgnoreCase)) { Write-Host "Exiting."; Exit 0 }
+            Write-Warning "No active Keeper session detected. Launching Keeper shell for login. Type 'quit' when finished."
+            Invoke-KeeperLoginShell
             $sessionOk = Test-KeeperSession
             if (-not $sessionOk) { Write-Error "Keeper login still not verified. Exiting."; Exit 1 }
         }
