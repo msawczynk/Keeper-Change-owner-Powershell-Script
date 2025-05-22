@@ -1,5 +1,5 @@
 Keeper Credential Ownership Transfer PowerShell Script
-Version: 2.22 (as per the script this README is based on)
+Version: 2.24 (as per the script this README is based on)
 
 Overview
 This PowerShell script automates the process of transferring ownership of all credentials within specified Keeper Shared Folders or those accessible via Keeper Teams to a designated Keeper user. It is designed for administrators who need to manage credential ownership in bulk, for instance, during employee off-boarding or role changes.
@@ -165,7 +165,7 @@ Configuration File Example (keeper_transfer_config.json)
 {
   "NewOwnerEmail": "new.owner@example.com",
   "LogDetail": "SilentlyContinue",
-  "ScriptConfigVersion": "2.22",
+  "ScriptConfigVersion": "2.24",
   "SelectedTeams": [
     {
       "Name": "Sales Team",
@@ -180,7 +180,7 @@ Or for specific folders:
 {
   "NewOwnerEmail": "new.owner@example.com",
   "LogDetail": "Verbose",
-  "ScriptConfigVersion": "2.22",
+  "ScriptConfigVersion": "2.24",
   "SelectedSharedFolders": [
     {
       "Name": "Project Alpha Folder",
