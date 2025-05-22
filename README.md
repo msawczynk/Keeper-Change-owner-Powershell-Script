@@ -118,9 +118,10 @@ Run Script:
 
 .\keeper_ownership_transfer.ps1
 
+(Or use the full path to the script).
+
 The script launches the Keeper shell for login; type `quit` when done.
 You'll then be asked if you want to enable persistent login for automation.
-(Or use the full path to the script).
 
 Follow Prompts:
 

@@ -228,10 +228,9 @@ Function Test-KeeperSession {
     return $false
 }
 Function Invoke-KeeperLoginShell {
-    Write-Host "`nLaunching Keeper shell. Log in if needed, then type 'quit' to return." -ForegroundColor Cyan
+    Write-Host "`nLaunching Keeper shell for login. Type 'quit' when done." -ForegroundColor Cyan
     & $Global:KeeperExecutablePath shell
 }
-
 
 Function Select-FromConsoleMenu {
     param(
@@ -516,7 +515,12 @@ try {
         Write-Host "If prompted, log in. Type 'quit' to return here." -ForegroundColor Yellow
         Invoke-KeeperLoginShell
         $sessionOk = Test-KeeperSession
-        if (-not $sessionOk) { Write-Error "Keeper login not verified. Exiting."; Exit 1 }
+        if (-not $sessionOk) {
+            Write-Warning "No active Keeper session detected. Launching Keeper shell for login. Type 'quit' when finished."
+            Invoke-KeeperLoginShell
+            $sessionOk = Test-KeeperSession
+            if (-not $sessionOk) { Write-Error "Keeper login still not verified. Exiting."; Exit 1 }
+        }
         Write-Host "Keeper login verified." -ForegroundColor Green
         $persistChoice = $Host.UI.PromptForChoice("Persistent Login", "Enable persistent login for this account?", $yesNoOptions, 1)
         if ($persistChoice -eq 0) {
