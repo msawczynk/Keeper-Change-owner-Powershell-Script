@@ -1,4 +1,3 @@
-#requires -Version 5.1
 <#
 .SYNOPSIS
     Manages ownership of credentials shared via Keeper teams or shared folders.
@@ -13,6 +12,20 @@
     - "SharedFolders": Processes a specific pre-configured list of shared folders.
     - "ProcessSpecificFoldersForTeams": Processes a pre-configured list of shared folders
       that were previously identified for specific teams.
+
+    .PARAMETER RunAutomated
+    Executes the script non-interactively using parameters from the configuration file.
+
+    .PARAMETER ConfigFilePath
+    Path to the JSON configuration file containing parameters for automated runs.
+
+    .EXAMPLE
+    Interactive run:
+        ./Change owner.ps1
+
+    .EXAMPLE
+    Automated run:
+        ./Change owner.ps1 -RunAutomated -ConfigFilePath C:\path\to\config.json
 
     IMPORTANT: 
     1. Ensure you are logged into Keeper Commander (e.g., via 'keeper-commander.exe shell' then 'exit')
@@ -29,6 +42,7 @@
     Prerequisites: Keeper Commander CLI (keeper-commander.exe) installed, configured, and logged in.
                    Appropriate Keeper administrative/Share Admin permissions.
 #>
+#requires -Version 5.1
 
 [CmdletBinding(SupportsShouldProcess=$true)]
 param (

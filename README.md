@@ -14,7 +14,7 @@ Multi-selection: Allows targeting multiple Teams or multiple Shared Folders in a
 
 Flexible Configuration: Different run modes for automated tasks, including dynamic discovery of a team's shared folders or processing predefined lists.
 
-Recursive Control: Option to control whether ownership transfer is recursive to sub-folders and their records.
+Ownership Transfer is recursive to sub-folders and their records.
 
 Prerequisites
 PowerShell: Version 5.1 or higher.
@@ -70,13 +70,6 @@ Syntactic check using .NET MailAddress class.
 
 Attempt to verify user existence in Keeper via user-info --email.
 
-Recursive Transfer Control:
-
--NoRecursive command-line switch.
-
-NoRecursive: $true/$false option in the configuration file.
-
-Interactive prompt to choose recursive behavior.
 
 Configuration File Management:
 
@@ -99,10 +92,9 @@ Progress Indicators: Write-Progress used for potentially long operations like fo
 Performance: When processing teams, shared folder details are fetched once and cached for the duration of that script run to reduce redundant API calls.
 
 Script Parameters
-.\keeper_ownership_transfer.ps1
+.\Change owner.ps1
     [-RunAutomated]
     [-ConfigFilePath <String>]
-    [-NoRecursive]
     [-WhatIf]
     [-Confirm]
     [-Verbose]
@@ -111,7 +103,6 @@ Script Parameters
 
 -ConfigFilePath <String>: (String) Full path to the JSON configuration file. Mandatory if -RunAutomated is used.
 
--NoRecursive: (Switch) If present, ownership transfer will NOT be recursive (omits --recursive from share-record command). Defaults to recursive.
 
 -WhatIf: (Switch) Shows what actions would be taken without actually performing them.
 
@@ -125,7 +116,7 @@ Login to Keeper: Open PowerShell, run keeper-commander.exe shell, log in, then e
 
 Run Script: In the same PowerShell window:
 
-.\keeper_ownership_transfer.ps1
+.\Change owner.ps1
 
 (Or use the full path to the script).
 
@@ -163,10 +154,8 @@ Set up Windows Task Scheduler:
 Program/script: powershell.exe
 
 Add arguments (optional):
+ExecutionPolicy Bypass -File "C:\Path\To\Your\Change owner.ps1" -RunAutomated -ConfigFilePath "C:\Path\To\Your\Config.json"
 
--ExecutionPolicy Bypass -File "C:\Path\To\Your\keeper_ownership_transfer.ps1" -RunAutomated -ConfigFilePath "C:\Path\To\Your\Config.json"
-
-(Optionally add -NoRecursive if needed).
 
 Run As: Use a dedicated service account for which Keeper Commander persistent login is configured (see below).
 
@@ -177,7 +166,6 @@ Configuration File Example (keeper_transfer_config.json)
   "NewOwnerEmail": "new.owner@example.com",
   "LogDetail": "SilentlyContinue",
   "ScriptConfigVersion": "2.22",
-  "NoRecursive": false,
   "SelectedTeams": [
     {
       "Name": "Sales Team",
@@ -193,7 +181,6 @@ Or for specific folders:
   "NewOwnerEmail": "new.owner@example.com",
   "LogDetail": "Verbose",
   "ScriptConfigVersion": "2.22",
-  "NoRecursive": true,
   "SelectedSharedFolders": [
     {
       "Name": "Project Alpha Folder",
