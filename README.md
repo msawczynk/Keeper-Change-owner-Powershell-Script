@@ -1,5 +1,5 @@
 Keeper Credential Ownership Transfer PowerShell Script
-Version: 2.24 (as per the script this README is based on)
+Version: 2.25 (as per the script this README is based on)
 
 Overview
 This PowerShell script automates the process of transferring ownership of all credentials within specified Keeper Shared Folders or those accessible via Keeper Teams to a designated Keeper user. It is designed for administrators who need to manage credential ownership in bulk, for instance, during employee off-boarding or role changes.
@@ -35,8 +35,10 @@ The ability to transfer ownership of records.
 
 Authenticated Keeper Session (for interactive use):
 
-When run interactively, the script now launches the Keeper Commander shell so you can log in directly.
-Type `quit` once authenticated to return and continue with the script.
+When run interactively, the script launches the Keeper Commander shell so you can log in or confirm your session.
+Type `quit` once authenticated (or if already logged in) to return and continue with the script.
+
+After login verification, the script asks if you want to enable persistent login for future automated runs. Choosing **Yes** opens the Keeper shell again so you can approve the device or run `setup`. Type `quit` when finished.
 
 The script includes a basic login check using keeper-commander.exe whoami.
 
@@ -116,8 +118,10 @@ Run Script:
 
 .\keeper_ownership_transfer.ps1
 
-The script launches the Keeper shell for login; type `quit` when done.
 (Or use the full path to the script).
+
+The script launches the Keeper shell for login; type `quit` when done.
+You'll then be asked if you want to enable persistent login for automation.
 
 Follow Prompts:
 
@@ -165,7 +169,7 @@ Configuration File Example (keeper_transfer_config.json)
 {
   "NewOwnerEmail": "new.owner@example.com",
   "LogDetail": "SilentlyContinue",
-  "ScriptConfigVersion": "2.24",
+  "ScriptConfigVersion": "2.25",
   "NoRecursive": false,
   "SelectedTeams": [
     {
@@ -181,7 +185,7 @@ Or for specific folders:
 {
   "NewOwnerEmail": "new.owner@example.com",
   "LogDetail": "Verbose",
-  "ScriptConfigVersion": "2.24",
+  "ScriptConfigVersion": "2.25",
   "NoRecursive": true,
   "SelectedSharedFolders": [
     {
