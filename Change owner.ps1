@@ -15,8 +15,7 @@
       that were previously identified for specific teams.
 
     IMPORTANT: 
-    1. Ensure you are logged into Keeper Commander (e.g., via 'keeper-commander.exe shell' then 'exit')
-       IN THE SAME POWERSHELL WINDOW before running this script interactively.
+    1. If an active Keeper session is not detected, the script launches the Keeper shell so you can log in and then continue.
     2. This script attempts to use JSON output (--format json) from Keeper CLI commands.
        If JSON fails, it falls back to text parsing which can be fragile.
     3. Out-GridView requires a graphical environment (WPF). If not available, the script
@@ -25,7 +24,7 @@
        shared folder in the vault, which can be time-consuming in large environments.
 .NOTES
     Author: AI Assistant (Incorporating User Audit Feedback)
-    Version: 2.24 (Login retry and format compatibility)
+    Version: 2.25 (interactive login shell and persistent login option)
     Prerequisites: Keeper Commander CLI (keeper-commander.exe) installed, configured, and logged in.
                    Appropriate Keeper administrative/Share Admin permissions.
 #>
@@ -62,7 +61,7 @@ $VerbosePreference = if ($RunAutomated) { "SilentlyContinue" } else { $originalV
 $useRecursive = $true
 if ($NoRecursive) { $useRecursive = $false }
 $Global:transferActionFailures = 0
-$scriptConfigFileVersion = "2.24"
+$scriptConfigFileVersion = "2.25"
 
 # --- Helper Functions ---
 Function Invoke-KeeperCommand {
@@ -228,6 +227,11 @@ Function Test-KeeperSession {
     }
     return $false
 }
+Function Invoke-KeeperLoginShell {
+    Write-Host "`nLaunching Keeper shell. Log in if needed, then type 'quit' to return." -ForegroundColor Cyan
+    & $Global:KeeperExecutablePath shell
+}
+
 
 Function Select-FromConsoleMenu {
     param(
@@ -508,16 +512,17 @@ try {
     } else { # Interactive Mode
         Write-Host "Running in Interactive mode." -ForegroundColor Yellow
         $logChoiceTitle = "Log Detail Level"; $logChoiceMsg = "Select log level:"; $logOptions = [System.Management.Automation.Host.ChoiceDescription[]]@(New-Object System.Management.Automation.Host.ChoiceDescription "&Normal"; New-Object System.Management.Automation.Host.ChoiceDescription "&Verbose"); $logChosenIndex = $Host.UI.PromptForChoice($logChoiceTitle, $logChoiceMsg, $logOptions, 0); if ($logChosenIndex -eq 1) { $VerbosePreference = "Continue" } else { $VerbosePreference = "SilentlyContinue" }; Write-Host "Log detail: $($VerbosePreference)." -ForegroundColor Magenta
-        Write-Host "`nVerifying Keeper login..." -ForegroundColor Yellow
+        Write-Host "`nLaunching Keeper shell to verify login." -ForegroundColor Yellow
+        Write-Host "If prompted, log in. Type 'quit' to return here." -ForegroundColor Yellow
+        Invoke-KeeperLoginShell
         $sessionOk = Test-KeeperSession
-        if (-not $sessionOk) {
-            Write-Warning "No active Keeper session detected. Log in via "keeper-commander.exe shell" in another window."
-            $resp = Read-Host "Press Enter when logged in or type Q to quit"
-            if ($resp -and $resp.StartsWith("q", [System.StringComparison]::OrdinalIgnoreCase)) { Write-Host "Exiting."; Exit 0 }
-            $sessionOk = Test-KeeperSession
-            if (-not $sessionOk) { Write-Error "Keeper login still not verified. Exiting."; Exit 1 }
-        }
+        if (-not $sessionOk) { Write-Error "Keeper login not verified. Exiting."; Exit 1 }
         Write-Host "Keeper login verified." -ForegroundColor Green
+        $persistChoice = $Host.UI.PromptForChoice("Persistent Login", "Enable persistent login for this account?", $yesNoOptions, 1)
+        if ($persistChoice -eq 0) {
+            Write-Host "`nLaunching Keeper shell to configure persistent login. Follow prompts and type 'quit' when finished." -ForegroundColor Cyan
+            Invoke-KeeperLoginShell
+        }
 
         $interactiveListType = ""; $choiceOptionsList = [System.Management.Automation.Host.ChoiceDescription[]]@(New-Object System.Management.Automation.Host.ChoiceDescription "&Teams"; New-Object System.Management.Automation.Host.ChoiceDescription "&Shared Folders"); $choiceTitleList = "Selection Type"; $choiceMessageList = "Work with Teams or Shared Folders?"; $chosenIndexList = $Host.UI.PromptForChoice($choiceTitleList, $choiceMessageList, $choiceOptionsList, 0); if ($chosenIndexList -eq 0) { $interactiveListType = "Teams"; $runModeToExecute = "Teams" } elseif ($chosenIndexList -eq 1) { $interactiveListType = "SharedFolders"; $runModeToExecute = "SharedFolders" } else { Write-Error "Invalid choice. Exiting."; Exit 1 }
 
@@ -647,20 +652,6 @@ finally {
         $VerbosePreference = $originalVerbosePreference 
     }
 
-    if (-not $RunAutomated) {
-        Write-Host "`n--- Keeper Commander Persistent Login Information ---" -ForegroundColor Cyan
-        $persistentLoginChoice = $Host.UI.PromptForChoice("Persistent Login Info", "View info on configuring persistent login for automated tasks?", $yesNoOptions, 1) 
-        if ($persistentLoginChoice -eq 0) { 
-            Write-Host @"
-To configure Keeper Commander for persistent login (for scheduled tasks):
-1. Device Approval (Recommended): Log in via `keeper-commander.exe shell` as the task's user account and approve the device.
-2. `config.json` with 2FA Seed (TOTP): If using 2FA, run `setup` in the shell to store the seed.
-   Protect `config.json` (typically in `C:\Users\<User>\.keeper\`).
-3. Session Resumption: Interactive logins store session tokens in `config.json`.
-Security: Avoid storing master passwords. Prioritize Device Approval/2FA Seed.
-"@ -ForegroundColor Gray
-        }
-    } 
 } 
 
 Write-Host "`n-----------------------------------------------------" -ForegroundColor Cyan
