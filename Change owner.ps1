@@ -25,7 +25,7 @@
        shared folder in the vault, which can be time-consuming in large environments.
 .NOTES
     Author: AI Assistant (Incorporating User Audit Feedback)
-    Version: 2.22 (Corrected Write-Progress status string formatting for variable expansion)
+    Version: 2.24 (Login retry and format compatibility)
     Prerequisites: Keeper Commander CLI (keeper-commander.exe) installed, configured, and logged in.
                    Appropriate Keeper administrative/Share Admin permissions.
 #>
@@ -34,8 +34,12 @@
 param (
     [Switch]$RunAutomated,
 
-    [string]$ConfigFilePath
+    [string]$ConfigFilePath,
+
+    [Switch]$NoRecursive
 )
+
+Set-StrictMode -Version Latest
 
 # --- Initial Parameter Validation & Global Setup ---
 if ($RunAutomated -and ([string]::IsNullOrWhiteSpace($ConfigFilePath))) {
@@ -53,10 +57,12 @@ catch {
     Exit 1
 }
 
-$originalVerbosePreference = $VerbosePreference 
-$VerbosePreference = if ($RunAutomated) { "SilentlyContinue" } else { $originalVerbosePreference } 
-$Global:transferActionFailures = 0 
-$scriptConfigFileVersion = "2.20" # Stays at 2.20 as config structure hasn't changed with this fix
+$originalVerbosePreference = $VerbosePreference
+$VerbosePreference = if ($RunAutomated) { "SilentlyContinue" } else { $originalVerbosePreference }
+$useRecursive = $true
+if ($NoRecursive) { $useRecursive = $false }
+$Global:transferActionFailures = 0
+$scriptConfigFileVersion = "2.24"
 
 # --- Helper Functions ---
 Function Invoke-KeeperCommand {
@@ -105,6 +111,19 @@ Function Invoke-KeeperCommand {
         
         $process.WaitForExit()
         $Global:KeeperCliExitCode = $process.ExitCode 
+        if ($Global:KeeperCliExitCode -ne 0 -and $errorOutput -match "argument --format: expected one argument" -and $AttemptJson) {
+            Write-Verbose "Retrying with --format=json syntax"
+            $argumentsToExecute = $argumentsToExecute -replace "--format json", "--format=json"
+            $outputLinesList = New-Object System.Collections.Generic.List[string]
+            $processInfo.Arguments = $argumentsToExecute
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $processInfo
+            $process.Start() | Out-Null
+            while (-not $process.StandardOutput.EndOfStream) { $outputLinesList.Add($process.StandardOutput.ReadLine()) }
+            $errorOutput = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            $Global:KeeperCliExitCode = $process.ExitCode
+        }
         
         $outputLinesArray = $outputLinesList.ToArray()
         $rawOutputString = $outputLinesArray -join [Environment]::NewLine
@@ -189,6 +208,25 @@ Function Invoke-KeeperActionCommand {
         Write-Error "Generic failure in Invoke-KeeperActionCommand for: $($Global:KeeperExecutablePath) $CommandArguments`n$($_.Exception.Message)"
         return $false 
     }
+}
+
+Function Test-KeeperSession {
+    [OutputType([bool])]
+    param()
+    $who = Invoke-KeeperCommand "whoami" -AttemptJson:$false
+    if ($who -and ($who | Out-String) -match "User:") { return $true }
+    if ($Global:KeeperCliExitCode -eq 0 -and $who) { return $true }
+    $paths = @()
+    if ($env:KEEPER_CONFIG_PATH) { $paths += $env:KEEPER_CONFIG_PATH }
+    if ($env:USERPROFILE) { $paths += Join-Path $env:USERPROFILE ".keeper\config.json" }
+    if ($env:HOME) { $paths += (Join-Path $env:HOME ".keeper/config.json") }
+    foreach ($p in $paths) {
+        if (Test-Path $p) {
+            try { $cfg = Get-Content $p -Raw | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+            if ($cfg.session_token) { return $true }
+        }
+    }
+    return $false
 }
 
 Function Select-FromConsoleMenu {
@@ -458,16 +496,28 @@ try {
 
             if ($config.PSObject.Properties['SelectedTeams']) { $config.SelectedTeams | ForEach-Object { $selectedTeamsToProcess.Add($_) } }
             if ($config.PSObject.Properties['SelectedSharedFolders']) { $config.SelectedSharedFolders | ForEach-Object { $sharedFoldersToProcess.Add($_) } }
+            if ($config.PSObject.Properties['NoRecursive']) { $useRecursive = -not [bool]$config.NoRecursive }
+            if ($NoRecursive) { $useRecursive = $false }
             if (-not $runModeToExecute -or -not $newOwnerEmailToUse) { Write-Error "Config file '$ConfigFilePath' is missing 'RunMode' or 'NewOwnerEmail'. Exiting."; Exit 1 }
             Write-Host "Parameters loaded from config file '$ConfigFilePath':" -ForegroundColor Green; Write-Host "  Run Mode: $runModeToExecute"
             if (@($selectedTeamsToProcess).Count -gt 0) { Write-Host "  Selected Team(s) (for context):"; $selectedTeamsToProcess | ForEach-Object { Write-Host "    - $($_.Name) (UID: $($_.UID))" } }
             if (@($sharedFoldersToProcess).Count -gt 0 -and ($runModeToExecute -eq "SharedFolders" -or $runModeToExecute -eq "ProcessSpecificFoldersForTeams")) { Write-Host "  Shared Folder(s) to Process:"; $sharedFoldersToProcess | ForEach-Object { Write-Host "    - $($_.Name) (UID: $($_.UID))" } }
             Write-Host "  New Owner: $newOwnerEmailToUse"
+            Write-Host "  Recursive: $useRecursive"
         } catch { Write-Error "Failed to load or parse config file '$ConfigFilePath'. Error: $($_.Exception.Message). Exiting."; Exit 1 }
     } else { # Interactive Mode
         Write-Host "Running in Interactive mode." -ForegroundColor Yellow
         $logChoiceTitle = "Log Detail Level"; $logChoiceMsg = "Select log level:"; $logOptions = [System.Management.Automation.Host.ChoiceDescription[]]@(New-Object System.Management.Automation.Host.ChoiceDescription "&Normal"; New-Object System.Management.Automation.Host.ChoiceDescription "&Verbose"); $logChosenIndex = $Host.UI.PromptForChoice($logChoiceTitle, $logChoiceMsg, $logOptions, 0); if ($logChosenIndex -eq 1) { $VerbosePreference = "Continue" } else { $VerbosePreference = "SilentlyContinue" }; Write-Host "Log detail: $($VerbosePreference)." -ForegroundColor Magenta
-        Write-Host "`nVerifying Keeper login..." -ForegroundColor Yellow; $loginCheckOutput = Invoke-KeeperCommand "whoami" -AttemptJson $false; if ($loginCheckOutput -eq $null -or $Global:KeeperCliExitCode -ne 0) { Write-Warning "Keeper 'whoami' failed (Code: $($Global:KeeperCliExitCode)). Not logged in or session invalid."; Write-Host "Login via 'keeper-commander.exe shell' in this window, then 'exit' shell."; $loginConfirmOptions = [System.Management.Automation.Host.ChoiceDescription[]]@(New-Object System.Management.Automation.Host.ChoiceDescription "&Continue"; New-Object System.Management.Automation.Host.ChoiceDescription "&Exit"); $loginConfirmIndex = $Host.UI.PromptForChoice("Login Status", "Proceed?", $loginConfirmOptions, 1); if ($loginConfirmIndex -ne 0) { Write-Host "Exiting."; Exit 0 }} else { Write-Host "Keeper 'whoami' OK." -ForegroundColor Green; Write-Verbose "Login check: $($loginCheckOutput -join [Environment]::NewLine)" }
+        Write-Host "`nVerifying Keeper login..." -ForegroundColor Yellow
+        $sessionOk = Test-KeeperSession
+        if (-not $sessionOk) {
+            Write-Warning "No active Keeper session detected. Log in via "keeper-commander.exe shell" in another window."
+            $resp = Read-Host "Press Enter when logged in or type Q to quit"
+            if ($resp -and $resp.StartsWith("q", [System.StringComparison]::OrdinalIgnoreCase)) { Write-Host "Exiting."; Exit 0 }
+            $sessionOk = Test-KeeperSession
+            if (-not $sessionOk) { Write-Error "Keeper login still not verified. Exiting."; Exit 1 }
+        }
+        Write-Host "Keeper login verified." -ForegroundColor Green
 
         $interactiveListType = ""; $choiceOptionsList = [System.Management.Automation.Host.ChoiceDescription[]]@(New-Object System.Management.Automation.Host.ChoiceDescription "&Teams"; New-Object System.Management.Automation.Host.ChoiceDescription "&Shared Folders"); $choiceTitleList = "Selection Type"; $choiceMessageList = "Work with Teams or Shared Folders?"; $chosenIndexList = $Host.UI.PromptForChoice($choiceTitleList, $choiceMessageList, $choiceOptionsList, 0); if ($chosenIndexList -eq 0) { $interactiveListType = "Teams"; $runModeToExecute = "Teams" } elseif ($chosenIndexList -eq 1) { $interactiveListType = "SharedFolders"; $runModeToExecute = "SharedFolders" } else { Write-Error "Invalid choice. Exiting."; Exit 1 }
 
@@ -514,9 +564,13 @@ try {
         }
         Write-Host "Transfer to: $newOwnerEmailToUse" -ForegroundColor Yellow
 
-        $saveParamsChoiceIndex = $Host.UI.PromptForChoice("Save Parameters", "Save for automated runs?", $yesNoOptions, 1) 
+        $recChoiceIndex = $Host.UI.PromptForChoice("Recursive Transfer", "Transfer recursively to sub-folders and records?", $yesNoOptions, 0)
+        $useRecursive = ($recChoiceIndex -eq 0)
+        if ($NoRecursive) { $useRecursive = $false }
+
+        $saveParamsChoiceIndex = $Host.UI.PromptForChoice("Save Parameters", "Save for automated runs?", $yesNoOptions, 1)
         if ($saveParamsChoiceIndex -eq 0) { 
-            $configToSave = @{ NewOwnerEmail = $newOwnerEmailToUse; LogDetail = $VerbosePreference.ToString(); ScriptConfigVersion = $scriptConfigFileVersion } 
+            $configToSave = @{ NewOwnerEmail = $newOwnerEmailToUse; LogDetail = $VerbosePreference.ToString(); ScriptConfigVersion = $scriptConfigFileVersion; NoRecursive = (-not $useRecursive) }
             $saveMode = $runModeToExecute
             if ($interactiveListType -eq "Teams") {
                 $configToSave.Add("SelectedTeams", $selectedTeamsToProcess)
@@ -556,7 +610,11 @@ try {
 
     if (@($finalFoldersToProcess).Count -eq 0) { Write-Warning "No shared folders identified for processing. Nothing to do."; Exit 0 } 
     
-    Write-Warning "`nIMPORTANT: The '--recursive' flag used by 'share-record' will affect ALL records and sub-folders within the targeted shared folders."
+    if ($useRecursive) {
+        Write-Warning "`nIMPORTANT: The '--recursive' flag used by 'share-record' will affect ALL records and sub-folders within the targeted shared folders."
+    } else {
+        Write-Warning "`nNOTE: Ownership transfer will NOT be recursive."
+    }
     Write-Host "Will attempt ownership transfer for the following Shared Folder(s) to '$($newOwnerEmailToUse)':" -ForegroundColor Yellow
     $finalFoldersToProcess | Select-Object -Unique -Property UID, Name | ForEach-Object { Write-Host "  - $($_.Name) (UID: $($_.UID))" }
 
@@ -569,7 +627,8 @@ try {
             $statusMsgLoop = "Processing folder {0} of {1}: {2}" -f $processedCountLoop, $totalToProcessLoop, $folder.Name
             Write-Progress -Activity "Transferring Ownership" -Status $statusMsgLoop -PercentComplete (($processedCountLoop / $totalToProcessLoop) * 100)
             Write-Host "`nAttempting ownership transfer for Shared Folder '$($folder.Name)' (UID: $($folder.UID)) to '$newOwnerEmailToUse'..." -ForegroundColor Yellow
-            $transferCmd = "share-record --action owner --email ""$newOwnerEmailToUse"" --recursive -- ""$($folder.UID)"""
+            $recArg = if ($useRecursive) { "--recursive" } else { "" }
+            $transferCmd = "share-record --action owner --email ""$newOwnerEmailToUse"" $recArg -- ""$($folder.UID)"""
             if (-not (Invoke-KeeperActionCommand $transferCmd)) {
                 $Global:transferActionFailures++
                 Write-Warning "Ownership transfer FAILED for folder: $($folder.Name) (UID: $($folder.UID))"
@@ -616,8 +675,9 @@ if ($Global:transferActionFailures -gt 0) {
 Write-Host "Please verify the ownership changes in Keeper." -ForegroundColor Yellow
 Write-Host "-----------------------------------------------------" -ForegroundColor Cyan
 
-if ($Global:transferActionFailures -eq 0 -and ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq $null) ) {
+$lastExit = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+if ($Global:transferActionFailures -eq 0 -and ($lastExit -eq 0 -or $null -eq $lastExit)) {
     Exit 0
-} elseif ($LASTEXITCODE -ne 0) {
-    Exit $LASTEXITCODE 
+} elseif ($null -ne $lastExit -and $lastExit -ne 0) {
+    Exit $lastExit
 }
