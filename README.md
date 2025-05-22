@@ -35,17 +35,8 @@ The ability to transfer ownership of records.
 
 Authenticated Keeper Session (for interactive use):
 
-Before running interactively, log in to Keeper Commander in the same PowerShell window:
-
-Open PowerShell.
-
-Run keeper-commander.exe shell.
-
-Log in with your master password and 2FA.
-
-Type exit to leave the Keeper shell (the session remains active for that window).
-
-Then, run this script.
+When run interactively, the script now launches the Keeper Commander shell so you can log in directly.
+Type `quit` once authenticated to return and continue with the script.
 
 The script includes a basic login check using keeper-commander.exe whoami.
 
@@ -121,19 +112,17 @@ Script Parameters
 
 How to Use
 1. Interactive Mode
-Login to Keeper: Open PowerShell, run keeper-commander.exe shell, log in, then exit the shell.
-
-Run Script: In the same PowerShell window:
+Run Script:
 
 .\keeper_ownership_transfer.ps1
 
+The script launches the Keeper shell for login; type `quit` when done.
 (Or use the full path to the script).
 
 Follow Prompts:
 
 Select log detail level.
 
-Confirm login status.
 
 Choose "Teams" or "Shared Folders".
 
