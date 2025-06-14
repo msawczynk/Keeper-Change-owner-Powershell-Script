@@ -1,244 +1,233 @@
-Keeper Credential Ownership Transfer PowerShell Script
-Version: 2.24 (as per the script this README is based on)
+# Automating Shared‑Folder Ownership Transfers with **Keeper Commander**
 
-Overview
-This PowerShell script automates the process of transferring ownership of all credentials within specified Keeper Shared Folders or those accessible via Keeper Teams to a designated Keeper user. It is designed for administrators who need to manage credential ownership in bulk, for instance, during employee off-boarding or role changes.
+> **Audience** – Windows system admins & power users who manage Keeper Security vaults and are comfortable with basic PowerShell and Task Scheduler.
 
-The script supports:
+---
 
-Interactive Mode: For on-demand use with guided prompts.
+## 1. Why You’d Do This  
 
-Automated Mode: Using a JSON configuration file, suitable for scheduled tasks.
+Shared folders don’t have an explicit “owner” flag.  
+If you need a **single account to own everything in specific shared folders**—in order to meet off‑boarding, auditing, or compliance rules—you must:
 
-Multi-selection: Allows targeting multiple Teams or multiple Shared Folders in a single interactive session.
+1. **Make that account a *shared‑folder admin*** (can manage users & records).  
+2. **Transfer record ownership** for every item inside, recursively.
 
-Flexible Configuration: Different run modes for automated tasks, including dynamic discovery of a team's shared folders or processing predefined lists.
+Doing this manually is error‑prone; running it daily via an approved service account keeps the environment continuously correct.
 
-Recursive Control: Option to control whether ownership transfer is recursive to sub-folders and their records.
+---
 
-Prerequisites
-PowerShell: Version 5.1 or higher.
+## 2. Prerequisites  
 
-Keeper Commander CLI:
+| Requirement | Notes |
+|-------------|-------|
+| **Keeper Commander 17.0+** | Confirm with `keeper --version`. |
+| **Service account in Keeper** | e.g. `svc_keeper@example.com` with *Keeper Administrator* role. |
+| **Windows Server 2016+ / Windows 10+** | Host for Task Scheduler. |
+| **Persistent‑login token (30‑day)** | See § 8 to set it up once; automation is then password‑less. |
+| (Optional) **Enterprise SSO or stored TOTP** | Only needed if you refuse persistent‑login. |
 
-keeper-commander.exe must be installed.
+---
 
-The script attempts to locate it via Get-Command. Ensure it's in your system's PATH or provide the full path if necessary by modifying the $Global:KeeperExecutablePath variable at the beginning of the script.
+## 3. Solution Architecture  
 
-Keeper Account Permissions: The Keeper user account executing the script (or whose session is active) requires:
+```text
+┌────────────┐    daily @ 02:15     ┌─────────────────────┐
+│ TaskScheduler ──────────────────▶ │ PowerShell wrapper  │
+└────────────┘                      │  (Assign‑KeeperOwner.ps1)
+                                    │  • share-folder
+                                    │  • share-record
+                                    └─────────┬───────────┘
+                                              │ REST API
+                                              ▼
+                                    ┌─────────────────────┐
+                                    │  Keeper Commander   │
+                                    └─────────────────────┘
+```
 
-Administrative rights or "Share Admin" privileges to list teams and shared folders.
+*Two CLI calls per folder → idempotent ownership state.*
 
-Permissions to view details (including user/team permissions) of shared folders.
+---
 
-The ability to transfer ownership of records.
+## 4. The Script  
 
-Authenticated Keeper Session (for interactive use):
+Save as **`C:\\Scripts\\Assign‑KeeperOwner.ps1`**
 
-When run interactively, the script now launches the Keeper Commander shell so you can log in directly.
-Type `quit` once authenticated to return and continue with the script.
+```powershell
+<#
+.SYNOPSIS
+    Grants a designated user admin rights to one or more shared folders
+    and transfers ownership of all records inside.
 
-The script includes a basic login check using keeper-commander.exe whoami.
+.EXAMPLE
+    .\Assign-KeeperOwner.ps1 -UserEmail 'jane.doe@example.com' `
+        -FolderUIDs '-FHdesR_GSERHUwBg4vTXw','9SCeW43ldKU3pTic3cYxKQ'
+#>
 
-Persistent Login for Scheduled Tasks: For automated/scheduled runs, Keeper Commander must be configured for non-interactive login. See "Persistent Login for Automation" section below.
+param(
+    [Parameter(Mandatory=$true)]
+    [string]   $UserEmail,
 
-Graphical Environment (Optional for Interactive Mode):
+    [Parameter(Mandatory=$true)]
+    [string[]] $FolderUIDs,
 
-Out-GridView is used for GUI-based item selection. If not available (e.g., headless server, PowerShell Core without GUI modules), the script gracefully falls back to a console-based menu.
+    [string]   $KeeperExe = 'keeper-commander.exe',
 
-Features
-Interactive & Automated Modes: Flexible execution options.
+    [switch]   $DryRun
+)
 
-Log Detail Control: Choose between "Normal" and "Verbose" logging in interactive mode.
-
-Login Verification: Basic check for an active Keeper Commander session in interactive mode.
-
-Multi-Team & Multi-Shared Folder Selection: Select multiple targets in one interactive session.
-
-New Owner Email Validation:
-
-Syntactic check using .NET MailAddress class.
-
-Attempt to verify user existence in Keeper via user-info --email.
-
-Recursive Transfer Control:
-
--NoRecursive command-line switch.
-
-NoRecursive: $true/$false option in the configuration file.
-
-Interactive prompt to choose recursive behavior.
-
-Configuration File Management:
-
-Save parameters from an interactive run to a JSON file.
-
-Supports RunMode:
-
-Teams: Dynamically discovers folders for specified teams each run.
-
-SharedFolders: Processes a predefined list of shared folders.
-
-ProcessSpecificFoldersForTeams: Processes a saved list of folders previously identified for specific teams.
-
-Includes ScriptConfigVersion in the config for compatibility awareness.
-
-Error Handling: Reports Keeper CLI errors and tracks failed transfer actions, exiting with specific codes.
-
-Progress Indicators: Write-Progress used for potentially long operations like folder scanning and bulk transfers.
-
-Performance: When processing teams, shared folder details are fetched once and cached for the duration of that script run to reduce redundant API calls.
-
-Script Parameters
-.\keeper_ownership_transfer.ps1
-    [-RunAutomated]
-    [-ConfigFilePath <String>]
-    [-NoRecursive]
-    [-WhatIf]
-    [-Confirm]
-    [-Verbose]
-
--RunAutomated: (Switch) If present, the script runs non-interactively and requires -ConfigFilePath.
-
--ConfigFilePath <String>: (String) Full path to the JSON configuration file. Mandatory if -RunAutomated is used.
-
--NoRecursive: (Switch) If present, ownership transfer will NOT be recursive (omits --recursive from share-record command). Defaults to recursive.
-
--WhatIf: (Switch) Shows what actions would be taken without actually performing them.
-
--Confirm: (Switch) Prompts for confirmation before performing actions that change data.
-
--Verbose: (Switch) Overrides the script's internal log level selection and enables detailed verbose output.
-
-How to Use
-1. Interactive Mode
-Run Script:
-
-.\keeper_ownership_transfer.ps1
-
-The script launches the Keeper shell for login; type `quit` when done.
-(Or use the full path to the script).
-
-Follow Prompts:
-
-Select log detail level.
-
-
-Choose "Teams" or "Shared Folders".
-
-Select target item(s) from the GUI or console menu.
-
-Enter the new owner's email.
-
-Choose recursive behavior.
-
-Optionally save parameters to a JSON config file.
-
-Confirm the transfer operation.
-
-Review & Verify: Check script output and verify changes in your Keeper Vault.
-
-2. Automated Mode (for Scheduled Tasks)
-Generate Configuration File:
-
-Run the script interactively once.
-
-When prompted, save the parameters to a .json file (e.g., C:\Scripts\KeeperTransferConfig_TeamX.json).
-
-Choose the desired "Save Team Configuration As" mode if you selected teams.
-
-Set up Windows Task Scheduler:
-
-Program/script: powershell.exe
-
-Add arguments (optional):
-
--ExecutionPolicy Bypass -File "C:\Path\To\Your\keeper_ownership_transfer.ps1" -RunAutomated -ConfigFilePath "C:\Path\To\Your\Config.json"
-
-(Optionally add -NoRecursive if needed).
-
-Run As: Use a dedicated service account for which Keeper Commander persistent login is configured (see below).
-
-Monitor: Check Task Scheduler history and script logs (if implemented separately).
-
-Configuration File Example (keeper_transfer_config.json)
-{
-  "NewOwnerEmail": "new.owner@example.com",
-  "LogDetail": "SilentlyContinue",
-  "ScriptConfigVersion": "2.24",
-  "NoRecursive": false,
-  "SelectedTeams": [
-    {
-      "Name": "Sales Team",
-      "UID": "teamUID1_xxxxxxxxxxxx"
+function Run-Keeper ($cmd) {
+    if ($DryRun) { $cmd += ' --dry-run' }
+    & $KeeperExe $cmd 2>&1 | Tee-Object -Variable output
+    if ($LASTEXITCODE) {
+        throw "Keeper command failed: $($output -join ' ')" 
     }
-  ],
-  "RunMode": "Teams"
 }
 
-Or for specific folders:
+foreach ($sf in $FolderUIDs) {
 
-{
-  "NewOwnerEmail": "new.owner@example.com",
-  "LogDetail": "Verbose",
-  "ScriptConfigVersion": "2.24",
-  "NoRecursive": true,
-  "SelectedSharedFolders": [
-    {
-      "Name": "Project Alpha Folder",
-      "UID": "sfUID_alpha_xxxxxxxx"
-    },
-    {
-      "Name": "Archived Projects",
-      "UID": "sfUID_archive_xxxxxx"
-    }
-  ],
-  "RunMode": "SharedFolders" 
+    # 1. Grant shared-folder admin rights
+    Run-Keeper @"
+share-folder --action grant `
+    --email $UserEmail `
+    --manage-users on --manage-records on -- $sf
+"@
+
+    # 2. Transfer record ownership recursively
+    Run-Keeper @"
+share-record --action owner `
+    --email $UserEmail --recursive --force -- $sf
+"@
 }
+```
 
-Persistent Login for Automation
-For scheduled/automated runs, Keeper Commander needs to authenticate non-interactively. The script offers to display this information at the end of an interactive session. Key methods:
+### Key Flags
 
-Device Approval (Recommended):
+| Flag | Purpose |
+|------|---------|
+| `--action grant` | Grants user rights on folder. |
+| `--manage-users on` & `--manage-records on` | Makes target user *shared‑folder admin*. |
+| `--action owner` | Sets target as record owner. |
+| `--recursive --force` | Recurse into sub‑folders, take over existing ownership conflicts. |
+| `--dry-run` | Simulate changes—no vault modifications. |
 
-Log in interactively once as the user account the task will run under (keeper-commander.exe shell).
+The script is **idempotent**: re‑running when rights already exist simply returns *no change*.
 
-Approve the device via Keeper's 2FA mechanism. This allows non-interactive commands for an extended period.
+---
 
-config.json with 2FA Seed (TOTP):
+## 5. Scheduling the Job  
 
-If the Keeper account uses TOTP 2FA, during an interactive keeper-commander.exe shell login, when prompted for the 2FA code, type setup.
+Run once (elevated PowerShell) on the host:
 
-This stores the 2FA secret seed in Commander's config.json (typically C:\Users\<User>\.keeper\config.json). Commander can then generate its own codes.
+```powershell
+$trigger = New-ScheduledTaskTrigger -Daily -At 02:15
+$action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+           -Argument '-NoLogo -NonInteractive -ExecutionPolicy Bypass -File "C:\\Scripts\\Assign-KeeperOwner.ps1"'
+Register-ScheduledTask -TaskName 'Keeper-FolderOwner' `
+    -Trigger $trigger -Action $action `
+    -User 'DOMAIN\\svc_keeper' -RunLevel Highest
+```
 
-Secure this config.json file with strict file system permissions.
+> **Tip** – select *“Run whether user is logged on or not”* and store the service‑account password once.
 
-Session Resumption:
+---
 
-An interactive login via shell usually stores session tokens in config.json, which subsequent commands can use until expiry.
+## 6. Testing  
 
-Security Note: Avoid storing your master password directly. Prioritize Device Approval and 2FA Seed methods.
+1. **Dry run**:  
 
-Error Handling
-The script tracks failures during ownership transfer actions ($Global:transferActionFailures).
+   ```powershell
+   .\Assign-KeeperOwner.ps1 -UserEmail 'jane.doe@example.com' `
+       -FolderUIDs 'abc123...' -DryRun
+   ```
 
-Exits with code 0 on full success.
+   Confirm output.  
+2. Remove `-DryRun`, re‑execute.  
+3. Verify in **Admin Console → Reporting → Record Ownership** or via:
 
-Exits with code 2 if one or more transfer actions failed.
+   ```powershell
+   keeper list --records --owned
+   ```
 
-May exit with other non-zero codes if critical Keeper CLI commands fail during data gathering.
+---
 
-Always review script output and verify changes in Keeper.
+## 7. Troubleshooting & Edge Cases  
 
-Known Limitations / Performance
-Text Parsing: If Keeper Commander fails to return JSON for list commands (enterprise-info --teams, lsf), the script falls back to text parsing, which can be less reliable if the CLI output format changes.
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| `device not approved` | Service account never opened Commander interactive shell. | Log on once, run `keeper shell`, approve device code. |
+| `illegal request: record already owned` | Another user manually set a different owner. | Script will override next run (expected). |
+| Task hangs forever | MFA prompt waiting for input. | Use persistent‑login (§ 8) or embed stored TOTP. |
+| New sub‑folders not covered | Added after last run. | Next nightly pass picks them up automatically. |
 
-Team Folder Discovery: When RunMode is "Teams", the script fetches a list of all shared folders and then gets details for each one individually (folder-info <UID>) to check team permissions. This is done once per run and details are cached in memory for that run. However, in environments with thousands of shared folders, this initial data gathering can be time-consuming.
+---
 
-Batch folder-info: The script currently calls folder-info for each shared folder individually when building the cache for team processing, as batching multiple UIDs with folder-info (like folder-info UID1 UID2...) is not a universally supported feature across all Keeper Commander versions for returning a single JSON array.
+## 8. Persistent‑Login: Set‑Up & Automatic Refresh  
 
-Contributing
-Feel free to fork this repository, make improvements, and submit pull requests.
+> **Goal** – one interactive session, never store a master password, and the token silently renews.
 
-License
-Specify your preferred license here (e.g., MIT, Apache 2.0). If unsure, MIT is a common permissive license.
+### 8.1 One‑Time Interactive Boot‑Strap  
+
+```powershell
+keeper shell
+# In the commander prompt:
+this-device register
+this-device persistent-login on
+this-device timeout 30d          # optional (default 30d)
+this-device ip-auto-approve on   # optional
+quit                             # DO NOT run "logout"
+```
+
+`config.json` now holds the device keys & 30‑day refresh token (per‑machine).
+
+### 8.2 How Auto‑Refresh Works  
+
+* Every non‑interactive Commander run touches the API.  
+* If the token is < 30 days old, Commander extends its expiry back to 30 days.  
+* Your daily schedule therefore **keeps the token alive forever**.
+
+### 8.3 Optional Safety Ping  
+
+Create `C:\\Scripts\\Keeper‑Ping.ps1`:
+
+```powershell
+& 'keeper-commander.exe' whoami --config 'C:\\Users\\svc_keeper\\.keeper\\config.json'
+```
+
+Schedule it monthly (1 st at 00:30) to refresh even if main job fails.
+
+### 8.4 Golden Rules  
+
+| Do | Don’t |
+|----|-------|
+| Back up `config.json` securely. | **Never** call `keeper logout` in scripts. |
+| Keep hostname & SID unchanged. | Copy the token file to another machine (it will invalidate). |
+| Rotate token via `persistent-login off/on` when policy demands. | Store master passwords in plaintext. |
+
+---
+
+## 9. Frequently Asked Questions  
+
+**Q. Does this break if the user already has some rights?**  
+No. Commander merges and upgrades privileges; it won’t downgrade existing access.
+
+**Q. What if the user gets deleted?**  
+The nightly job will error. Pause or remove the task before de‑provisioning, or point to a new account.
+
+**Q. Why not embed the master password instead?**  
+Because someone will eventually cat the script or commit it to Git. The persistent‑login token is device‑bound and short‑lived.
+
+**Q. Can this run from a container that restarts daily?**  
+Yes, but then use env‑driven password injection or Secret Manager; the token file vanishes with the container filesystem.
+
+---
+
+## 10. Change History  
+
+| Date | Revision | Notes |
+|------|----------|-------|
+| 2025‑06‑14 | v1.1 | Added persistent‑login setup & auto‑refresh steps. |
+| 2025‑06‑14 | v1.0 | Initial public version. |
+
+---
+
+**Two Keeper commands, one scheduled task, self‑refreshing token – that’s it.**
