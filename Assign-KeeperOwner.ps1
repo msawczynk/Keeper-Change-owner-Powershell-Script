@@ -20,43 +20,98 @@ param(
     [switch]   $DryRun
 )
 
-function Run-Keeper ($cmd) {    
+function Run-Keeper-Clean ($cmd, $retryCount = 2) {    
     Write-Host "Executing: $KeeperExe $cmd" -ForegroundColor Yellow
     
-    try {
-        & $KeeperExe $cmd 2>&1 | Tee-Object -Variable output
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Keeper command returned exit code $LASTEXITCODE but continuing..."
-            Write-Host "Command output: $($output -join ' ')" -ForegroundColor Red
-            # Don't throw - just warn and continue
-            return $false
+    for ($i = 0; $i -le $retryCount; $i++) {
+        try {
+            # Redirect stderr to null to suppress communication errors, keep stdout
+            $output = & $KeeperExe $cmd 2>$null
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[SUCCESS] Command completed successfully" -ForegroundColor Green
+                if ($output) {
+                    # Only show relevant output, filter out error messages
+                    $cleanOutput = $output | Where-Object { 
+                        $_ -notmatch "Communication Error" -and 
+                        $_ -notmatch "Invalid recordKey" -and
+                        $_ -notmatch "App Store" -and
+                        $_ -notmatch "keepersecurity.com/support" -and
+                        $_ -notmatch "RemoteException" -and
+                        $_ -match "\S"  # Not empty/whitespace
+                    }
+                    if ($cleanOutput) {
+                        Write-Host "Output:" -ForegroundColor Cyan
+                        $cleanOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor White }
+                    }
+                }
+                return $true
+            }
+            else {
+                if ($i -lt $retryCount) {
+                    Write-Host "[RETRY] Command failed (exit code$($LASTEXITCODE)), retrying... ($($i+1)/$($retryCount+1))" -ForegroundColor Yellow
+                    Start-Sleep -Seconds 2
+                }
+                else {
+                    Write-Host "[FAILED] Command failed after $($retryCount+1) attempts (exit code $LASTEXITCODE)" -ForegroundColor Red
+                    return $false
+                }
+            }
         }
-        return $true
+        catch {
+            if ($i -lt $retryCount) {
+                Write-Host "[RETRY] Exception occurred, retrying... ($($i+1)/$($retryCount+1))" -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
+            }
+            else {
+                Write-Host "[ERROR] Exception after $($retryCount+1) attempts - $($_.Exception.Message)" -ForegroundColor Red
+                return $false
+            }
+        }
     }
-    catch {
-        Write-Warning "Error executing Keeper command: $($_.Exception.Message)"
-        return $false
-    }
+    return $false
 }
+
+Write-Host "=== Starting Keeper Ownership Transfer Script ===" -ForegroundColor Magenta
+Write-Host "Target User: $UserEmail" -ForegroundColor Cyan
+Write-Host "Folders to Process: $($FolderUIDs.Count)" -ForegroundColor Cyan
 
 foreach ($sf in $FolderUIDs) {
+    Write-Host "`n[FOLDER] Processing folder: $sf" -ForegroundColor Green
+    Write-Host "=" * 60 -ForegroundColor Gray
 
-    Write-Host "`nProcessing folder: $sf" -ForegroundColor Green
-
-    # 1. Grant shared-folder admin rights (using working command format)
+    # 1. Grant shared-folder admin rights
+    Write-Host "[STEP 1] Granting admin rights..." -ForegroundColor Blue
     $shareFolderCmd = "share-folder --action=grant --email=$UserEmail --manage-users=on --manage-records=on $sf"
+    
     if ($DryRun) {
-        Write-Host "DRY RUN: Would execute: $KeeperExe $shareFolderCmd" -ForegroundColor Cyan
+        Write-Host "[DRY RUN] Would execute: $KeeperExe $shareFolderCmd" -ForegroundColor Cyan
+        $step1Success = $true
     } else {
-        Run-Keeper $shareFolderCmd
+        $step1Success = Run-Keeper-Clean $shareFolderCmd
     }
 
-    # 2. Transfer record ownership recursively (supports --dry-run)
+    # 2. Transfer record ownership recursively
+    Write-Host "[STEP 2] Transferring record ownership..." -ForegroundColor Blue
+    
     if ($DryRun) {
         $shareRecordCmd = "share-record --dry-run --action=owner --email=$UserEmail --recursive --force $sf"
-        Run-Keeper $shareRecordCmd
     } else {
         $shareRecordCmd = "share-record --action=owner --email=$UserEmail --recursive --force $sf"
-        Run-Keeper $shareRecordCmd
+    }
+    
+    $step2Success = Run-Keeper-Clean $shareRecordCmd
+
+    # Summary for this folder
+    if ($step1Success -and $step2Success) {
+        Write-Host "[SUCCESS] Folder $sf - ALL OPERATIONS COMPLETED SUCCESSFULLY" -ForegroundColor Green
+    } elseif ($step1Success) {
+        Write-Host "[PARTIAL] Folder $sf - Admin rights granted, but record transfer had issues" -ForegroundColor Yellow
+    } elseif ($step2Success) {
+        Write-Host "[PARTIAL] Folder $sf - Records transferred, but admin rights grant had issues" -ForegroundColor Yellow
+    } else {
+        Write-Host "[FAILED] Folder $sf - BOTH OPERATIONS FAILED" -ForegroundColor Red
     }
 }
+
+Write-Host "`n=== Script execution completed ===" -ForegroundColor Magenta
