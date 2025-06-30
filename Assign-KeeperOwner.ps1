@@ -20,8 +20,9 @@ param(
     [switch]   $DryRun
 )
 
-function Run-Keeper ($cmd) {
-    if ($DryRun) { $cmd += ' --dry-run' }
+function Run-Keeper ($cmd) {    
+    Write-Host "Executing: $KeeperExe $cmd" -ForegroundColor Yellow
+    
     & $KeeperExe $cmd 2>&1 | Tee-Object -Variable output
     if ($LASTEXITCODE) {
         throw "Keeper command failed: $($output -join ' ')" 
@@ -30,16 +31,22 @@ function Run-Keeper ($cmd) {
 
 foreach ($sf in $FolderUIDs) {
 
-    # 1. Grant shared-folder admin rights
-    Run-Keeper @"
-share-folder --action grant `
-    --email $UserEmail `
-    --manage-users on --manage-records on -- $sf
-"@
+    Write-Host "`nProcessing folder: $sf" -ForegroundColor Green
 
-    # 2. Transfer record ownership recursively
-    Run-Keeper @"
-share-record --action owner `
-    --email $UserEmail --recursive --force -- $sf
-"@
+    # 1. Grant shared-folder admin rights (does not support --dry-run)
+    $shareFolderCmd = "share-folder --action grant --email $UserEmail --manage-users on --manage-records on -- $sf"
+    if ($DryRun) {
+        Write-Host "DRY RUN: Would execute: $KeeperExe $shareFolderCmd" -ForegroundColor Cyan
+    } else {
+        Run-Keeper $shareFolderCmd
+    }
+
+    # 2. Transfer record ownership recursively (supports --dry-run)
+    if ($DryRun) {
+        $shareRecordCmd = "share-record --dry-run --action owner --email $UserEmail --recursive --force -- $sf"
+        Run-Keeper $shareRecordCmd
+    } else {
+        $shareRecordCmd = "share-record --action owner --email $UserEmail --recursive --force -- $sf"
+        Run-Keeper $shareRecordCmd
+    }
 }
