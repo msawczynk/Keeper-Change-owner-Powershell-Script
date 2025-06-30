@@ -33,8 +33,8 @@ foreach ($sf in $FolderUIDs) {
 
     Write-Host "`nProcessing folder: $sf" -ForegroundColor Green
 
-    # 1. Grant shared-folder admin rights (does not support --dry-run)
-    $shareFolderCmd = "share-folder --action grant --email $UserEmail --manage-users on --manage-records on -- $sf"
+    # 1. Grant shared-folder admin rights (using working command format)
+    $shareFolderCmd = "share-folder --action=grant --email=$UserEmail --manage-users=on --manage-records=on $sf"
     if ($DryRun) {
         Write-Host "DRY RUN: Would execute: $KeeperExe $shareFolderCmd" -ForegroundColor Cyan
     } else {
@@ -43,10 +43,10 @@ foreach ($sf in $FolderUIDs) {
 
     # 2. Transfer record ownership recursively (supports --dry-run)
     if ($DryRun) {
-        $shareRecordCmd = "share-record --dry-run --action owner --email $UserEmail --recursive --force -- $sf"
+        $shareRecordCmd = "share-record --dry-run --action=owner --email=$UserEmail --recursive --force $sf"
         Run-Keeper $shareRecordCmd
     } else {
-        $shareRecordCmd = "share-record --action owner --email $UserEmail --recursive --force -- $sf"
+        $shareRecordCmd = "share-record --action=owner --email=$UserEmail --recursive --force $sf"
         Run-Keeper $shareRecordCmd
     }
 }
