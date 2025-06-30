@@ -23,9 +23,19 @@ param(
 function Run-Keeper ($cmd) {    
     Write-Host "Executing: $KeeperExe $cmd" -ForegroundColor Yellow
     
-    & $KeeperExe $cmd 2>&1 | Tee-Object -Variable output
-    if ($LASTEXITCODE) {
-        throw "Keeper command failed: $($output -join ' ')" 
+    try {
+        & $KeeperExe $cmd 2>&1 | Tee-Object -Variable output
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Keeper command returned exit code $LASTEXITCODE but continuing..."
+            Write-Host "Command output: $($output -join ' ')" -ForegroundColor Red
+            # Don't throw - just warn and continue
+            return $false
+        }
+        return $true
+    }
+    catch {
+        Write-Warning "Error executing Keeper command: $($_.Exception.Message)"
+        return $false
     }
 }
 
